@@ -14,6 +14,9 @@
 // - Capturing photos during streaming sessions
 // - Handling different video qualities and formats
 // - Processing raw video data (I420 -> NV21 conversion)
+//
+// Added:
+// - Send JPEG frames to Mac over WebSocket via adb reverse (phone localhost:8765 -> Mac localhost:8765)
 
 package com.meta.wearable.dat.externalsampleapps.cameraaccess.stream
 
@@ -61,32 +64,48 @@ class StreamViewModel(
 
   companion object {
     private const val TAG = "StreamViewModel"
+    private const val WS_URL = "ws://127.0.0.1:8765"
     private val INITIAL_STATE = StreamUiState()
   }
 
   private val deviceSelector: DeviceSelector = wearablesViewModel.deviceSelector
   private var streamSession: StreamSession? = null
 
-  private val _uiState = MutableStateFlow(INITIAL_STATE)
+  // Sends JPEG frames to Mac via adb reverse (phone localhost:8765 -> Mac localhost:8765)
+  private val wsSender = WsBinarySender(WS_URL)
+
+  private var lastWsSentMs: Long = 0L
+private val _uiState = MutableStateFlow(INITIAL_STATE)
   val uiState: StateFlow<StreamUiState> = _uiState.asStateFlow()
 
   private var videoJob: Job? = null
   private var stateJob: Job? = null
 
+  private var frameCounter: Long = 0
+
   fun startStream() {
     videoJob?.cancel()
     stateJob?.cancel()
-    val streamSession =
+
+    // Connect WS first so we are ready when frames arrive
+    wsSender.connect()
+
+    val session =
         Wearables.startStreamSession(
                 getApplication(),
                 deviceSelector,
                 StreamConfiguration(videoQuality = VideoQuality.MEDIUM, 24),
             )
             .also { streamSession = it }
-    videoJob = viewModelScope.launch { streamSession.videoStream.collect { handleVideoFrame(it) } }
+
+    videoJob =
+        viewModelScope.launch {
+          session.videoStream.collect { handleVideoFrame(it) }
+        }
+
     stateJob =
         viewModelScope.launch {
-          streamSession.state.collect { currentState ->
+          session.state.collect { currentState ->
             val prevState = _uiState.value.streamSessionState
             _uiState.update { it.copy(streamSessionState = currentState) }
 
@@ -104,8 +123,17 @@ class StreamViewModel(
     videoJob = null
     stateJob?.cancel()
     stateJob = null
-    streamSession?.close()
+
+    try {
+      streamSession?.close()
+    } catch (t: Throwable) {
+      Log.w(TAG, "streamSession close failed", t)
+    }
     streamSession = null
+
+    // Close WS
+    wsSender.close()
+
     _uiState.update { INITIAL_STATE }
   }
 
@@ -127,8 +155,8 @@ class StreamViewModel(
               handlePhotoData(photoData)
               _uiState.update { it.copy(isCapturing = false) }
             }
-            ?.onFailure {
-              Log.e(TAG, "Photo capture failed")
+            ?.onFailure { err ->
+              Log.e(TAG, "Photo capture failed", err)
               _uiState.update { it.copy(isCapturing = false) }
             }
       }
@@ -169,7 +197,7 @@ class StreamViewModel(
       chooser.flags = Intent.FLAG_ACTIVITY_NEW_TASK
       context.startActivity(chooser)
     } catch (e: IOException) {
-      Log.e("StreamViewModel", "Failed to share photo", e)
+      Log.e(TAG, "Failed to share photo", e)
     }
   }
 
@@ -177,6 +205,8 @@ class StreamViewModel(
     // VideoFrame contains raw I420 video data in a ByteBuffer
     val buffer = videoFrame.buffer
     val dataSize = buffer.remaining()
+    if (dataSize <= 0) return
+
     val byteArray = ByteArray(dataSize)
 
     // Save current position
@@ -188,13 +218,28 @@ class StreamViewModel(
     // Convert I420 to NV21 format which is supported by Android's YuvImage
     val nv21 = convertI420toNV21(byteArray, videoFrame.width, videoFrame.height)
     val image = YuvImage(nv21, ImageFormat.NV21, videoFrame.width, videoFrame.height, null)
-    val out =
+
+    val jpegBytes =
         ByteArrayOutputStream().use { stream ->
           image.compressToJpeg(Rect(0, 0, videoFrame.width, videoFrame.height), 50, stream)
           stream.toByteArray()
         }
 
-    val bitmap = BitmapFactory.decodeByteArray(out, 0, out.size)
+    // Send to Mac over WS (binary message)
+    val now = System.currentTimeMillis()
+    val ok = if (now - lastWsSentMs >= 1000) {
+      lastWsSentMs = now
+      wsSender.sendVideoJpeg(jpegBytes)
+    } else {
+      true
+    }
+frameCounter += 1
+    if (!ok && (frameCounter % 60L == 0L)) {
+      Log.w(TAG, "WS send failing (not connected yet). frames=$frameCounter bytes=${jpegBytes.size}")
+    }
+
+    // Update UI preview
+    val bitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
     _uiState.update { it.copy(videoFrame = bitmap) }
   }
 
@@ -249,7 +294,7 @@ class StreamViewModel(
     val matrix = Matrix()
 
     if (exifInfo == null) {
-      return matrix // Identity matrix (no transformation)
+      return matrix
     }
 
     when (
@@ -258,32 +303,22 @@ class StreamViewModel(
             ExifInterface.ORIENTATION_NORMAL,
         )
     ) {
-      ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> {
-        matrix.postScale(-1f, 1f)
-      }
-      ExifInterface.ORIENTATION_ROTATE_180 -> {
-        matrix.postRotate(180f)
-      }
-      ExifInterface.ORIENTATION_FLIP_VERTICAL -> {
-        matrix.postScale(1f, -1f)
-      }
+      ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
+      ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+      ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
       ExifInterface.ORIENTATION_TRANSPOSE -> {
         matrix.postRotate(90f)
         matrix.postScale(-1f, 1f)
       }
-      ExifInterface.ORIENTATION_ROTATE_90 -> {
-        matrix.postRotate(90f)
-      }
+      ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
       ExifInterface.ORIENTATION_TRANSVERSE -> {
         matrix.postRotate(270f)
         matrix.postScale(-1f, 1f)
       }
-      ExifInterface.ORIENTATION_ROTATE_270 -> {
-        matrix.postRotate(270f)
-      }
+      ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
       ExifInterface.ORIENTATION_NORMAL,
       ExifInterface.ORIENTATION_UNDEFINED -> {
-        // No transformation needed
+        // no-op
       }
     }
 
@@ -291,15 +326,11 @@ class StreamViewModel(
   }
 
   private fun applyTransform(bitmap: Bitmap, matrix: Matrix): Bitmap {
-    if (matrix.isIdentity) {
-      return bitmap
-    }
+    if (matrix.isIdentity) return bitmap
 
     return try {
       val transformed = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-      if (transformed != bitmap) {
-        bitmap.recycle()
-      }
+      if (transformed != bitmap) bitmap.recycle()
       transformed
     } catch (e: OutOfMemoryError) {
       Log.e(TAG, "Failed to apply transformation due to memory", e)
@@ -310,7 +341,6 @@ class StreamViewModel(
   override fun onCleared() {
     super.onCleared()
     stopStream()
-    stateJob?.cancel()
   }
 
   class Factory(
@@ -323,8 +353,7 @@ class StreamViewModel(
         return StreamViewModel(
             application = application,
             wearablesViewModel = wearablesViewModel,
-        )
-            as T
+        ) as T
       }
       throw IllegalArgumentException("Unknown ViewModel class")
     }
