@@ -1,0 +1,10 @@
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+
+# Gradle generated
+**/gradle-daemon-jvm.properties
