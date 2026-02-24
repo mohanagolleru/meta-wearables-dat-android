@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Allow cleartext ws:// WebSocket connections to localhost only.
+    Traffic flows over the ADB USB reverse tunnel (already encrypted at transport layer),
+    so cleartext at the application layer is safe here.
+    All other domains remain on Android's default policy (TLS required).
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>
