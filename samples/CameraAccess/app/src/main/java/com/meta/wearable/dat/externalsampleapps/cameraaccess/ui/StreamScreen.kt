@@ -24,16 +24,21 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.background
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.meta.wearable.dat.camera.types.StreamSessionState
@@ -70,6 +75,21 @@ fun StreamScreen(
     if (streamUiState.streamSessionState == StreamSessionState.STARTING) {
       CircularProgressIndicator(
           modifier = Modifier.align(Alignment.Center),
+      )
+    }
+
+    // Show stream error as an overlay banner so the user can see what went wrong
+    streamUiState.streamError?.let { error ->
+      Text(
+          text = error,
+          color = Color.White,
+          fontSize = 13.sp,
+          textAlign = TextAlign.Center,
+          modifier =
+              Modifier.align(Alignment.TopCenter)
+                  .padding(top = 16.dp, start = 16.dp, end = 16.dp)
+                  .background(Color(0xCC_CC0000))
+                  .padding(horizontal = 12.dp, vertical = 6.dp),
       )
     }
 

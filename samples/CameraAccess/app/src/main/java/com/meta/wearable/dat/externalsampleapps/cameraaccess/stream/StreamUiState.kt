@@ -21,4 +21,6 @@ data class StreamUiState(
     val capturedPhoto: Bitmap? = null,
     val isShareDialogVisible: Boolean = false,
     val isCapturing: Boolean = false,
+    /** Non-null when stream startup or frame processing fails — shown to the user. */
+    val streamError: String? = null,
 )

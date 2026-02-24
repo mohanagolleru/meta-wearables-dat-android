@@ -50,12 +50,14 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class StreamViewModel(
     application: Application,
@@ -82,25 +84,39 @@ private val _uiState = MutableStateFlow(INITIAL_STATE)
   private var stateJob: Job? = null
 
   private var frameCounter: Long = 0
+  private var wsSendFailCount: Int = 0
 
   fun startStream() {
     videoJob?.cancel()
     stateJob?.cancel()
+    _uiState.update { it.copy(streamError = null) }
 
     // Connect WS first so we are ready when frames arrive
     wsSender.connect()
 
-    val session =
-        Wearables.startStreamSession(
-                getApplication(),
-                deviceSelector,
-                StreamConfiguration(videoQuality = VideoQuality.MEDIUM, 24),
-            )
-            .also { streamSession = it }
+    val session = try {
+      Wearables.startStreamSession(
+              getApplication(),
+              deviceSelector,
+              StreamConfiguration(videoQuality = VideoQuality.MEDIUM, 24),
+          )
+          .also { streamSession = it }
+    } catch (t: Throwable) {
+      Log.e(TAG, "Failed to start stream session", t)
+      _uiState.update { it.copy(streamError = "Stream failed to start: ${t.message}") }
+      return
+    }
 
+    // Heavy work (YUV conversion, JPEG encode, bitmap decode) runs on IO dispatcher
+    // to avoid stalling the main thread / Compose recomposition.
     videoJob =
-        viewModelScope.launch {
-          session.videoStream.collect { handleVideoFrame(it) }
+        viewModelScope.launch(Dispatchers.IO) {
+          try {
+            session.videoStream.collect { handleVideoFrame(it) }
+          } catch (t: Throwable) {
+            Log.e(TAG, "videoStream collect error", t)
+            _uiState.update { it.copy(streamError = "Frame stream error: ${t.message}") }
+          }
         }
 
     stateJob =
@@ -208,39 +224,48 @@ private val _uiState = MutableStateFlow(INITIAL_STATE)
     if (dataSize <= 0) return
 
     val byteArray = ByteArray(dataSize)
-
-    // Save current position
     val originalPosition = buffer.position()
     buffer.get(byteArray)
-    // Restore position
     buffer.position(originalPosition)
 
-    // Convert I420 to NV21 format which is supported by Android's YuvImage
+    // Convert I420 → NV21 (supported by YuvImage)
     val nv21 = convertI420toNV21(byteArray, videoFrame.width, videoFrame.height)
     val image = YuvImage(nv21, ImageFormat.NV21, videoFrame.width, videoFrame.height, null)
 
-    val jpegBytes =
-        ByteArrayOutputStream().use { stream ->
-          image.compressToJpeg(Rect(0, 0, videoFrame.width, videoFrame.height), 50, stream)
-          stream.toByteArray()
-        }
+    // Check compressToJpeg return value — a false return means encoding failed
+    val out = ByteArrayOutputStream()
+    val compressed = image.compressToJpeg(Rect(0, 0, videoFrame.width, videoFrame.height), 50, out)
+    if (!compressed) {
+      Log.w(TAG, "compressToJpeg failed for frame $frameCounter — dropping frame")
+      frameCounter++
+      return
+    }
+    val jpegBytes = out.toByteArray()
 
-    // Send to Mac over WS (binary message)
+    frameCounter++
+
+    // Send to Mac over WS at ~1 fps (throttled by lastWsSentMs)
     val now = System.currentTimeMillis()
-    val ok = if (now - lastWsSentMs >= 1000) {
+    if (now - lastWsSentMs >= 1000) {
       lastWsSentMs = now
-      wsSender.sendVideoJpeg(jpegBytes)
-    } else {
-      true
-    }
-frameCounter += 1
-    if (!ok && (frameCounter % 60L == 0L)) {
-      Log.w(TAG, "WS send failing (not connected yet). frames=$frameCounter bytes=${jpegBytes.size}")
+      val sent = wsSender.sendVideoJpeg(jpegBytes)
+      if (!sent) {
+        wsSendFailCount++
+        // Log on first failure, then every 5 — immediately visible rather than hiding for 60 frames
+        if (wsSendFailCount == 1 || wsSendFailCount % 5 == 0) {
+          Log.w(TAG, "WS send failing (attempt $wsSendFailCount, frame $frameCounter, ${jpegBytes.size}B) — check adb reverse + proxy")
+        }
+      } else if (wsSendFailCount > 0) {
+        Log.i(TAG, "WS send recovered after $wsSendFailCount consecutive failures")
+        wsSendFailCount = 0
+      }
     }
 
-    // Update UI preview
+    // Update UI preview (BitmapFactory on IO thread is fine; StateFlow update is thread-safe)
     val bitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
-    _uiState.update { it.copy(videoFrame = bitmap) }
+    if (bitmap != null) {
+      _uiState.update { it.copy(videoFrame = bitmap) }
+    }
   }
 
   // Convert I420 (YYYYYYYY:UUVV) to NV21 (YYYYYYYY:VUVU)
