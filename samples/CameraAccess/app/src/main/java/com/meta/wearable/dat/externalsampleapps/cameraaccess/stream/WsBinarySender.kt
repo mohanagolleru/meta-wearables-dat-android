@@ -49,7 +49,14 @@ class WsBinarySender(private val wsUrl: String) {
     val msg = ByteArray(1 + jpeg.size)
     msg[0] = 'V'.code.toByte()
     System.arraycopy(jpeg, 0, msg, 1, jpeg.size)
-    return ws?.send(ByteString.of(*msg)) ?: false
+    val sent = ws?.send(ByteString.of(*msg)) ?: false
+    if (!sent) {
+      // send() returned false — OkHttp cannot queue this frame (socket shutting down or
+      // send-buffer full). Reset isOpen so the lazy-connect fires on the very next frame
+      // rather than waiting for the async onClosed/onFailure callback race.
+      isOpen.set(false)
+    }
+    return sent
   }
 
   fun close() {

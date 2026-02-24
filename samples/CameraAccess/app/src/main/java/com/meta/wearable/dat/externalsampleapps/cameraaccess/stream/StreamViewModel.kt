@@ -103,7 +103,9 @@ private val _uiState = MutableStateFlow(INITIAL_STATE)
           .also { streamSession = it }
     } catch (t: Throwable) {
       Log.e(TAG, "Failed to start stream session", t)
+      wsSender.close()   // don't leave WS open when session creation failed
       _uiState.update { it.copy(streamError = "Stream failed to start: ${t.message}") }
+      wearablesViewModel.navigateToDeviceSelection()   // flip isStreaming→false so UI reflects reality
       return
     }
 
