@@ -87,8 +87,20 @@ private val _uiState = MutableStateFlow(INITIAL_STATE)
   private var wsSendFailCount: Int = 0
 
   fun startStream() {
+    // Re-entry guard: if a session is already alive, a duplicate startStream() call
+    // (e.g. LaunchedEffect firing twice on recomposition) would race with async SDK cleanup
+    // and trigger error code 1300 ("cannot process request from the current state, STOPPED").
+    // The live session will either stream successfully, or its stateJob will call stopStream()
+    // → navigateToDeviceSelection() when it finishes — no need to restart it here.
+    if (streamSession != null) {
+      Log.d(TAG, "startStream: session already active, ignoring duplicate call")
+      return
+    }
+
     videoJob?.cancel()
     stateJob?.cancel()
+    streamSession = null
+
     _uiState.update { it.copy(streamError = null) }
 
     // Connect WS first so we are ready when frames arrive
@@ -98,7 +110,7 @@ private val _uiState = MutableStateFlow(INITIAL_STATE)
       Wearables.startStreamSession(
               getApplication(),
               deviceSelector,
-              StreamConfiguration(videoQuality = VideoQuality.MEDIUM, 24),
+              StreamConfiguration(videoQuality = VideoQuality.LOW, 10),
           )
           .also { streamSession = it }
     } catch (t: Throwable) {
