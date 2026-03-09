@@ -16,9 +16,7 @@ package com.meta.wearable.dat.externalsampleapps.cameraaccess.ui
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -94,43 +92,22 @@ fun StreamScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize().padding(all = 24.dp)) {
-      Row(
+      // Single stop button — photo capture is handled by Gemini voice commands
+      SwitchButton(
+          label = stringResource(R.string.stop_stream_button_title),
+          onClick = {
+            streamViewModel.stopStream()
+            wearablesViewModel.navigateToDeviceSelection()
+          },
+          isDestructive = true,
           modifier =
               Modifier.align(Alignment.BottomCenter)
                   .navigationBarsPadding()
                   .fillMaxWidth()
                   .height(56.dp),
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
-          verticalAlignment = Alignment.CenterVertically,
-      ) {
-        SwitchButton(
-            label = stringResource(R.string.stop_stream_button_title),
-            onClick = {
-              streamViewModel.stopStream()
-              wearablesViewModel.navigateToDeviceSelection()
-            },
-            isDestructive = true,
-            modifier = Modifier.weight(1f),
-        )
-
-        // Photo capture button
-        CaptureButton(
-            onClick = { streamViewModel.capturePhoto() },
-        )
-      }
-    }
-  }
-
-  streamUiState.capturedPhoto?.let { photo ->
-    if (streamUiState.isShareDialogVisible) {
-      SharePhotoDialog(
-          photo = photo,
-          onDismiss = { streamViewModel.hideShareDialog() },
-          onShare = { bitmap ->
-            streamViewModel.sharePhoto(bitmap)
-            streamViewModel.hideShareDialog()
-          },
       )
     }
   }
+
+  // Share dialog removed — MedSpect handles evidence photos via Gemini voice
 }

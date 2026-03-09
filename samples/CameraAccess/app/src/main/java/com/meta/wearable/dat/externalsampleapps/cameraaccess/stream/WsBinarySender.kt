@@ -7,6 +7,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
+import okio.ByteString.Companion.toByteString
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -91,7 +92,7 @@ class WsBinarySender(private val wsUrl: String) {
     val msg = ByteArray(1 + jpeg.size)
     msg[0] = 'V'.code.toByte()
     System.arraycopy(jpeg, 0, msg, 1, jpeg.size)
-    val sent = ws?.send(ByteString.of(msg, 0, msg.size)) ?: false
+    val sent = ws?.send(msg.toByteString(0, msg.size)) ?: false
     if (!sent) {
       isOpen.set(false)
     }
@@ -105,7 +106,7 @@ class WsBinarySender(private val wsUrl: String) {
     val msg = ByteArray(1 + pcmData.size)
     msg[0] = 'A'.code.toByte()
     System.arraycopy(pcmData, 0, msg, 1, pcmData.size)
-    return ws?.send(ByteString.of(msg, 0, msg.size)) ?: false
+    return ws?.send(msg.toByteString(0, msg.size)) ?: false
   }
 
   /**
