@@ -5,8 +5,8 @@
  *   - Captures mic audio from the glasses (AudioRecord over SCO)
  *   - Plays response audio through the glasses speakers (AudioTrack over SCO)
  *
- * If no Bluetooth headset is connected or SCO fails to connect within 3 seconds,
- * falls back to phone mic/speaker with a logged warning.
+ * SCO connection is started asynchronously — audio begins with the phone mic/speaker
+ * and automatically switches to the glasses when Bluetooth SCO connects.
  *
  * Audio formats (matching Gemini Live API expectations):
  *   Input:  16 kHz, mono, PCM 16-bit
@@ -31,8 +31,6 @@ import android.media.MediaRecorder
 import android.util.Log
 import androidx.core.content.ContextCompat
 import java.io.ByteArrayOutputStream
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 class BluetoothAudioBridge(private val context: Context) {
 
@@ -42,11 +40,10 @@ class BluetoothAudioBridge(private val context: Context) {
         private const val OUTPUT_SAMPLE_RATE = 24000
         // Accumulate at least 100ms of audio before sending (16kHz * 1ch * 2 bytes * 0.1s)
         private const val MIN_SEND_BYTES = 3200
-        private const val SCO_CONNECT_TIMEOUT_MS = 3000L
     }
 
     /** Called with accumulated PCM chunks captured from the glasses mic. */
-    var onAudioCaptured: ((ByteArray) -> Unit)? = null
+    @Volatile var onAudioCaptured: ((ByteArray) -> Unit)? = null
 
     private var audioRecord: AudioRecord? = null
     private var audioTrack: AudioTrack? = null
@@ -59,12 +56,16 @@ class BluetoothAudioBridge(private val context: Context) {
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var scoReceiver: BroadcastReceiver? = null
     @Volatile private var scoConnected = false
-    private var scoLatch: CountDownLatch? = null
 
     // ── Public API ──────────────────────────────────────────────────
 
     /**
      * Start capturing audio from the glasses mic and prepare playback.
+     *
+     * SCO connection is started asynchronously — audio begins with the phone mic/speaker
+     * and automatically switches to the glasses when Bluetooth SCO connects.
+     * This avoids blocking the main thread (which would deadlock the BroadcastReceiver).
+     *
      * Returns true if capture started successfully, false on failure
      * (missing permissions, AudioRecord init failure, etc.)
      */
@@ -80,20 +81,12 @@ class BluetoothAudioBridge(private val context: Context) {
             return false
         }
 
-        // Fix 1: Activate SCO and WAIT for it to connect before building AudioRecord
-        val latch = CountDownLatch(1)
-        scoLatch = latch
+        // Start SCO asynchronously — audio starts with phone mic fallback and switches
+        // to glasses when SCO connects. We do NOT block here because startCapture() is
+        // called from the main thread and BroadcastReceiver.onReceive() also dispatches
+        // on the main looper — blocking would deadlock.
         startSco()
-
-        // Wait up to 3s for SCO to connect
-        val scoReady = latch.await(SCO_CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-        scoLatch = null
-        if (!scoReady) {
-            Log.w(TAG, "SCO did not connect within ${SCO_CONNECT_TIMEOUT_MS}ms — " +
-                "falling back to phone mic/speaker")
-        } else {
-            Log.d(TAG, "SCO connected — routing audio through glasses")
-        }
+        Log.d(TAG, "SCO requested (async) — will use phone mic until glasses connect")
 
         // Fix 2: Validate AudioRecord initialization
         val bufferSize = AudioRecord.getMinBufferSize(
@@ -204,14 +197,23 @@ class BluetoothAudioBridge(private val context: Context) {
     fun playAudio(data: ByteArray) {
         val track = audioTrack ?: return
         if (!isCapturing || data.isEmpty()) return
-        track.write(data, 0, data.size)
+        // MEDIUM FIX: check write return value for errors
+        val written = track.write(data, 0, data.size)
+        if (written < 0) {
+            Log.w(TAG, "AudioTrack.write error: $written")
+        }
     }
 
     /** Flush playback buffer (e.g. on interruption). */
     fun flushPlayback() {
-        audioTrack?.pause()
-        audioTrack?.flush()
-        audioTrack?.play()
+        val track = audioTrack ?: return
+        try {
+            track.pause()
+            track.flush()
+            track.play()
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "flushPlayback failed: ${e.message}")
+        }
     }
 
     fun stopCapture() {
@@ -224,7 +226,9 @@ class BluetoothAudioBridge(private val context: Context) {
         captureThread?.join(2000)
         captureThread = null
 
-        // Fix 3: Flush remaining accumulated audio — callback outside lock
+        // Flush remaining accumulated audio if callback is still wired.
+        // (StreamViewModel nulls onAudioCaptured before calling stopCapture,
+        //  so this is a safety net for direct stopCapture() calls.)
         val flushedChunk: ByteArray?
         synchronized(accumulateLock) {
             flushedChunk = if (accumulatedData.size() > 0) {
@@ -238,7 +242,12 @@ class BluetoothAudioBridge(private val context: Context) {
         audioRecord?.release()
         audioRecord = null
 
-        audioTrack?.stop()
+        // MEDIUM FIX: AudioTrack.stop() can throw if not in started state
+        try {
+            audioTrack?.stop()
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "AudioTrack.stop failed: ${e.message}")
+        }
         audioTrack?.release()
         audioTrack = null
 
@@ -264,9 +273,8 @@ class BluetoothAudioBridge(private val context: Context) {
                 )
                 scoConnected = (state == AudioManager.SCO_AUDIO_STATE_CONNECTED)
                 Log.d(TAG, "SCO state changed: connected=$scoConnected")
-                // Fix 1: Signal the latch so startCapture() can proceed
                 if (scoConnected) {
-                    scoLatch?.countDown()
+                    Log.i(TAG, "SCO connected — audio now routed through glasses")
                 }
             }
         }

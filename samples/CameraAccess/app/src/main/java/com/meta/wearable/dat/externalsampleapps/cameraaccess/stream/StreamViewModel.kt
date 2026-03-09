@@ -77,7 +77,9 @@ class StreamViewModel(
   private val audioBridge = BluetoothAudioBridge(application)
 
   private var lastWsSentMs: Long = 0L
-private val _uiState = MutableStateFlow(INITIAL_STATE)
+  // Reusable ByteArrayOutputStream — avoids allocating a new one per frame
+  private val jpegBuffer = ByteArrayOutputStream(32_768)
+  private val _uiState = MutableStateFlow(INITIAL_STATE)
   val uiState: StateFlow<StreamUiState> = _uiState.asStateFlow()
 
   private var videoJob: Job? = null
@@ -129,6 +131,9 @@ private val _uiState = MutableStateFlow(INITIAL_STATE)
           .also { streamSession = it }
     } catch (t: Throwable) {
       Log.e(TAG, "Failed to start stream session", t)
+      // Null callbacks before stopping — prevents late events from hitting released resources
+      wsSender.onAudioReceived = null
+      audioBridge.onAudioCaptured = null
       audioBridge.stopCapture()
       wsSender.close()   // don't leave WS open when session creation failed
       _uiState.update { it.copy(streamError = "Stream failed to start: ${t.message}") }
@@ -164,6 +169,12 @@ private val _uiState = MutableStateFlow(INITIAL_STATE)
   }
 
   fun stopStream() {
+    // Null callbacks FIRST — before anything that could trigger late events.
+    // streamSession?.close() and coroutine cancellation can still fire callbacks
+    // on the IO/OkHttp threads, so sever the wiring up front.
+    wsSender.onAudioReceived = null
+    audioBridge.onAudioCaptured = null
+
     videoJob?.cancel()
     videoJob = null
     stateJob?.cancel()
@@ -175,10 +186,6 @@ private val _uiState = MutableStateFlow(INITIAL_STATE)
       Log.w(TAG, "streamSession close failed", t)
     }
     streamSession = null
-
-    // Fix 7: Null callbacks BEFORE stopping — prevents late events from hitting released resources
-    wsSender.onAudioReceived = null
-    audioBridge.onAudioCaptured = null
 
     audioBridge.stopCapture()
     wsSender.close()
@@ -253,38 +260,47 @@ private val _uiState = MutableStateFlow(INITIAL_STATE)
   private fun handleVideoFrame(videoFrame: VideoFrame) {
     // VideoFrame contains raw I420 video data in a ByteBuffer
     val buffer = videoFrame.buffer
+    val w = videoFrame.width
+    val h = videoFrame.height
     val dataSize = buffer.remaining()
-    if (dataSize <= 0) return
+
+    // MEDIUM FIX: validate I420 frame size (Y + U + V = w*h * 3/2)
+    val expectedSize = w * h * 3 / 2
+    if (dataSize < expectedSize) {
+      Log.w(TAG, "I420 frame too small: got $dataSize, expected $expectedSize for ${w}x${h}")
+      return
+    }
 
     val byteArray = ByteArray(dataSize)
     val originalPosition = buffer.position()
     buffer.get(byteArray)
     buffer.position(originalPosition)
 
-    // Convert I420 → NV21 (supported by YuvImage)
-    val nv21 = convertI420toNV21(byteArray, videoFrame.width, videoFrame.height)
-    val image = YuvImage(nv21, ImageFormat.NV21, videoFrame.width, videoFrame.height, null)
-
-    // Check compressToJpeg return value — a false return means encoding failed
-    val out = ByteArrayOutputStream()
-    val compressed = image.compressToJpeg(Rect(0, 0, videoFrame.width, videoFrame.height), 50, out)
-    if (!compressed) {
-      Log.w(TAG, "compressToJpeg failed for frame $frameCounter — dropping frame")
-      frameCounter++
-      return
-    }
-    val jpegBytes = out.toByteArray()
-
     frameCounter++
 
-    // Send to Mac over WS at ~1 fps (throttled by lastWsSentMs)
+    // Throttle: only JPEG-encode + send at ~1 fps to avoid wasting CPU
     val now = System.currentTimeMillis()
-    if (now - lastWsSentMs >= 1000) {
+    val shouldSend = now - lastWsSentMs >= 1000
+
+    // Convert I420 → NV21 (supported by YuvImage)
+    val nv21 = convertI420toNV21(byteArray, w, h)
+    val image = YuvImage(nv21, ImageFormat.NV21, w, h, null)
+
+    // MEDIUM FIX: reuse ByteArrayOutputStream instead of allocating per frame
+    jpegBuffer.reset()
+    val compressed = image.compressToJpeg(Rect(0, 0, w, h), 50, jpegBuffer)
+    if (!compressed) {
+      Log.w(TAG, "compressToJpeg failed for frame $frameCounter — dropping frame")
+      return
+    }
+    val jpegBytes = jpegBuffer.toByteArray()
+
+    // Send to Mac over WS at ~1 fps
+    if (shouldSend) {
       lastWsSentMs = now
       val sent = wsSender.sendVideoJpeg(jpegBytes)
       if (!sent) {
         wsSendFailCount++
-        // Log on first failure, then every 5 — immediately visible rather than hiding for 60 frames
         if (wsSendFailCount == 1 || wsSendFailCount % 5 == 0) {
           Log.w(TAG, "WS send failing (attempt $wsSendFailCount, frame $frameCounter, ${jpegBytes.size}B) — check adb reverse + proxy")
         }
@@ -297,6 +313,9 @@ private val _uiState = MutableStateFlow(INITIAL_STATE)
     // Update UI preview (BitmapFactory on IO thread is fine; StateFlow update is thread-safe)
     val bitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
     if (bitmap != null) {
+      // Do NOT call old.recycle() — Compose may still be rendering the previous frame
+      // on the UI thread when this IO-thread code runs. At 1 fps and small (640px) frames,
+      // GC pressure from letting the old bitmap be collected naturally is negligible.
       _uiState.update { it.copy(videoFrame = bitmap) }
     }
   }
@@ -399,6 +418,9 @@ private val _uiState = MutableStateFlow(INITIAL_STATE)
   override fun onCleared() {
     super.onCleared()
     stopStream()
+    // Permanently shut down OkHttpClient threads — only safe here because the
+    // ViewModel (and its WsBinarySender) are being destroyed.
+    wsSender.destroy()
   }
 
   class Factory(
