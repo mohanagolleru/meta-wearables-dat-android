@@ -6,17 +6,14 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-// StreamViewModel - DAT Camera Streaming API Demo
+// StreamViewModel - MedSpect Camera + Audio Streaming
 //
-// This ViewModel demonstrates the DAT Camera Streaming APIs for:
-// - Creating and managing stream sessions with wearable devices
-// - Receiving video frames from device cameras
-// - Capturing photos during streaming sessions
-// - Handling different video qualities and formats
-// - Processing raw video data (I420 -> NV21 conversion)
+// Streams camera frames AND glasses mic audio to the Mac over WebSocket,
+// receives Gemini response audio back, and plays it through the glasses speakers.
 //
-// Added:
-// - Send JPEG frames to Mac over WebSocket via adb reverse (phone localhost:8765 -> Mac localhost:8765)
+// Video: WDAT camera → I420 → NV21 → JPEG → WS (b'V' prefix) → Mac → Gemini
+// Audio: Glasses mic → BT SCO → AudioRecord → WS (b'A' prefix) → Mac → Gemini
+//        Gemini → Mac → WS (b'A' prefix) → AudioTrack → BT SCO → Glasses speakers
 
 package com.meta.wearable.dat.externalsampleapps.cameraaccess.stream
 
@@ -73,8 +70,11 @@ class StreamViewModel(
   private val deviceSelector: DeviceSelector = wearablesViewModel.deviceSelector
   private var streamSession: StreamSession? = null
 
-  // Sends JPEG frames to Mac via adb reverse (phone localhost:8765 -> Mac localhost:8765)
+  // Bidirectional relay: video + audio to Mac, response audio from Mac
   private val wsSender = WsBinarySender(WS_URL)
+
+  // Bluetooth SCO audio bridge for glasses mic/speaker
+  private val audioBridge = BluetoothAudioBridge(application)
 
   private var lastWsSentMs: Long = 0L
 private val _uiState = MutableStateFlow(INITIAL_STATE)
@@ -106,6 +106,20 @@ private val _uiState = MutableStateFlow(INITIAL_STATE)
     // Connect WS first so we are ready when frames arrive
     wsSender.connect()
 
+    // Wire audio: glasses mic → WS → Mac, and Mac → WS → glasses speakers
+    audioBridge.onAudioCaptured = { pcmData ->
+      // Fix 9: log sendAudio failures so dropped audio is visible in logcat
+      if (!wsSender.sendAudio(pcmData)) {
+        Log.w(TAG, "audio send failed — WS may be disconnected")
+      }
+    }
+    wsSender.onAudioReceived = { pcmData -> audioBridge.playAudio(pcmData) }
+
+    // Fix 8: startCapture() returns false on failure (permissions, BT unavailable, etc.)
+    if (!audioBridge.startCapture()) {
+      Log.e(TAG, "Audio capture failed to start — continuing with video only")
+    }
+
     val session = try {
       Wearables.startStreamSession(
               getApplication(),
@@ -115,6 +129,7 @@ private val _uiState = MutableStateFlow(INITIAL_STATE)
           .also { streamSession = it }
     } catch (t: Throwable) {
       Log.e(TAG, "Failed to start stream session", t)
+      audioBridge.stopCapture()
       wsSender.close()   // don't leave WS open when session creation failed
       _uiState.update { it.copy(streamError = "Stream failed to start: ${t.message}") }
       wearablesViewModel.navigateToDeviceSelection()   // flip isStreaming→false so UI reflects reality
@@ -161,7 +176,11 @@ private val _uiState = MutableStateFlow(INITIAL_STATE)
     }
     streamSession = null
 
-    // Close WS
+    // Fix 7: Null callbacks BEFORE stopping — prevents late events from hitting released resources
+    wsSender.onAudioReceived = null
+    audioBridge.onAudioCaptured = null
+
+    audioBridge.stopCapture()
     wsSender.close()
 
     _uiState.update { INITIAL_STATE }
