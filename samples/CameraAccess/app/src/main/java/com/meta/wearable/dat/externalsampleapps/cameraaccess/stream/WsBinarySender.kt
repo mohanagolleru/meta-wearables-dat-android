@@ -101,7 +101,11 @@ class WsBinarySender(private val wsUrl: String) {
 
   /** Send mic audio captured from the glasses to the Mac. */
   fun sendAudio(pcmData: ByteArray): Boolean {
-    if (!isOpen.get()) return false
+    if (!isOpen.get()) {
+      // Lazy reconnect — same pattern as sendVideoJpeg()
+      connect()
+      return false
+    }
     // HIGH FIX: avoid spread operator — use ByteString.of(byte[], offset, count)
     val msg = ByteArray(1 + pcmData.size)
     msg[0] = 'A'.code.toByte()

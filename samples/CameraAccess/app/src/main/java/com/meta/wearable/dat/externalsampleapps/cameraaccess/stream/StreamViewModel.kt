@@ -87,6 +87,7 @@ class StreamViewModel(
 
   private var frameCounter: Long = 0
   private var wsSendFailCount: Int = 0
+  private var audioSendFailCount: Int = 0
 
   fun startStream() {
     // Re-entry guard: if a session is already alive, a duplicate startStream() call
@@ -109,10 +110,17 @@ class StreamViewModel(
     wsSender.connect()
 
     // Wire audio: glasses mic → WS → Mac, and Mac → WS → glasses speakers
+    audioSendFailCount = 0
     audioBridge.onAudioCaptured = { pcmData ->
-      // Fix 9: log sendAudio failures so dropped audio is visible in logcat
       if (!wsSender.sendAudio(pcmData)) {
-        Log.w(TAG, "audio send failed — WS may be disconnected")
+        audioSendFailCount++
+        // Throttle: log first failure, then every 100th to avoid spam
+        if (audioSendFailCount == 1 || audioSendFailCount % 100 == 0) {
+          Log.w(TAG, "audio send failed x$audioSendFailCount — WS may be disconnected")
+        }
+      } else if (audioSendFailCount > 0) {
+        Log.i(TAG, "audio send recovered after $audioSendFailCount failures")
+        audioSendFailCount = 0
       }
     }
     wsSender.onAudioReceived = { pcmData -> audioBridge.playAudio(pcmData) }
