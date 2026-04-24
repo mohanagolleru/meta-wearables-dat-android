@@ -49,6 +49,8 @@ import java.io.FileOutputStream
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -81,6 +83,12 @@ class StreamViewModel(
   private val jpegBuffer = ByteArrayOutputStream(32_768)
   private val _uiState = MutableStateFlow(INITIAL_STATE)
   val uiState: StateFlow<StreamUiState> = _uiState.asStateFlow()
+
+  // Audio level for voice orb visualization (0.0–1.0)
+  private val _audioLevel = MutableStateFlow(0f)
+  val audioLevel: StateFlow<Float> = _audioLevel.asStateFlow()
+
+  private var audioLevelJob: Job? = null
 
   private var videoJob: Job? = null
   private var stateJob: Job? = null
@@ -128,6 +136,14 @@ class StreamViewModel(
     // Fix 8: startCapture() returns false on failure (permissions, BT unavailable, etc.)
     if (!audioBridge.startCapture()) {
       Log.e(TAG, "Audio capture failed to start — continuing with video only")
+    } else {
+      // Poll audio level for voice orb at ~15 FPS
+      audioLevelJob = viewModelScope.launch {
+        while (isActive) {
+          _audioLevel.value = audioBridge.currentRmsLevel
+          delay(66) // ~15 FPS
+        }
+      }
     }
 
     val session = try {
@@ -182,6 +198,10 @@ class StreamViewModel(
     // on the IO/OkHttp threads, so sever the wiring up front.
     wsSender.onAudioReceived = null
     audioBridge.onAudioCaptured = null
+
+    audioLevelJob?.cancel()
+    audioLevelJob = null
+    _audioLevel.value = 0f
 
     videoJob?.cancel()
     videoJob = null

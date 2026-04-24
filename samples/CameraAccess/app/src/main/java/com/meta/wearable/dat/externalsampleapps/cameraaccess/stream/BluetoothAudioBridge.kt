@@ -57,6 +57,14 @@ class BluetoothAudioBridge(private val context: Context) {
     private var scoReceiver: BroadcastReceiver? = null
     @Volatile private var scoConnected = false
 
+    /** Current mic audio level (0.0 = silence, 1.0 = max). Updated from capture thread. */
+    @Volatile var currentRmsLevel: Float = 0f
+        private set
+
+    /** True while playAudio() is actively receiving data. */
+    @Volatile var isPlayingAudio: Boolean = false
+        private set
+
     // ── Public API ──────────────────────────────────────────────────
 
     /**
@@ -174,6 +182,19 @@ class BluetoothAudioBridge(private val context: Context) {
                     break
                 }
                 if (read > 0) {
+                    // Compute RMS for voice orb visualization (~10x/sec from capture thread)
+                    var sum = 0L
+                    val sampleCount = read / 2  // 16-bit PCM = 2 bytes per sample
+                    for (i in 0 until read step 2) {
+                        val lo = buffer[i].toInt() and 0xFF
+                        val hi = buffer[i + 1].toInt()
+                        val sample = (hi shl 8) or lo  // little-endian PCM16
+                        sum += sample.toLong() * sample
+                    }
+                    currentRmsLevel = if (sampleCount > 0) {
+                        (kotlin.math.sqrt(sum.toDouble() / sampleCount) / 32768.0).toFloat().coerceIn(0f, 1f)
+                    } else 0f
+
                     // Fix 3: Snapshot chunk inside lock, invoke callback OUTSIDE lock
                     val chunk: ByteArray?
                     synchronized(accumulateLock) {
@@ -197,6 +218,7 @@ class BluetoothAudioBridge(private val context: Context) {
     fun playAudio(data: ByteArray) {
         val track = audioTrack ?: return
         if (!isCapturing || data.isEmpty()) return
+        isPlayingAudio = true
         // MEDIUM FIX: check write return value for errors
         val written = track.write(data, 0, data.size)
         if (written < 0) {
@@ -238,6 +260,9 @@ class BluetoothAudioBridge(private val context: Context) {
             }
         }
         flushedChunk?.let { onAudioCaptured?.invoke(it) }
+
+        currentRmsLevel = 0f
+        isPlayingAudio = false
 
         audioRecord?.release()
         audioRecord = null

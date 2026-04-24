@@ -15,6 +15,7 @@ package com.meta.wearable.dat.externalsampleapps.cameraaccess.ui
 
 import android.widget.Toast
 import androidx.activity.compose.LocalActivity
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,19 +34,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,15 +52,14 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.meta.wearable.dat.core.types.Permission
 import com.meta.wearable.dat.core.types.PermissionStatus
 import com.meta.wearable.dat.core.types.RegistrationState
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.R
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.wearables.WearablesViewModel
-import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NonStreamScreen(
     viewModel: WearablesViewModel,
@@ -72,16 +67,13 @@ fun NonStreamScreen(
     modifier: Modifier = Modifier,
 ) {
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-  val gettingStartedSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-  val scope = rememberCoroutineScope()
   var dropdownExpanded by remember { mutableStateOf(false) }
   val isDisconnectEnabled = uiState.registrationState is RegistrationState.Registered
   val activity = LocalActivity.current
   val context = LocalContext.current
 
-  MaterialTheme(colorScheme = darkColorScheme()) {
     Box(
-        modifier = modifier.fillMaxSize().background(Color.Black).padding(all = 24.dp),
+        modifier = modifier.fillMaxSize().background(AppColor.Background).padding(all = 24.dp),
         contentAlignment = Alignment.Center,
     ) {
       Box(modifier = Modifier.align(Alignment.TopEnd).systemBarsPadding()) {
@@ -89,7 +81,7 @@ fun NonStreamScreen(
           Icon(
               imageVector = Icons.Default.LinkOff,
               contentDescription = "DisconnectIcon",
-              tint = Color.White,
+              tint = AppColor.PrimaryAccent,
               modifier = Modifier.size(28.dp),
           )
         }
@@ -118,26 +110,36 @@ fun NonStreamScreen(
 
       Column(
           horizontalAlignment = Alignment.CenterHorizontally,
-          verticalArrangement = Arrangement.spacedBy(8.dp),
+          verticalArrangement = Arrangement.spacedBy(12.dp),
       ) {
         Icon(
-            painter = painterResource(id = R.drawable.camera_access_icon),
-            contentDescription = stringResource(R.string.camera_access_icon_description),
-            tint = Color.White,
-            modifier = Modifier.size(80.dp),
+            painter = painterResource(id = R.drawable.smart_glasses_icon),
+            contentDescription = "Glasses icon",
+            tint = AppColor.PrimaryAccent,
+            modifier = Modifier.size(48.dp),
         )
-        Text(
-            text = stringResource(R.string.non_stream_screen_title),
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center,
-            color = Color.White,
-        )
-        Text(
-            text = stringResource(R.string.non_stream_screen_description),
-            textAlign = TextAlign.Center,
-            color = Color.White,
-        )
+        if (uiState.hasActiveDevice) {
+          Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            Canvas(modifier = Modifier.size(10.dp)) {
+              drawCircle(color = AppColor.Safe)
+            }
+            Text(
+                text = "Glasses Connected",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = AppColor.TextPrimary,
+            )
+          }
+        } else {
+          Text(
+              text = "Waiting for glasses...",
+              fontSize = 16.sp,
+              color = AppColor.TextSecondary,
+          )
+        }
       }
 
       Column(
@@ -153,43 +155,27 @@ fun NonStreamScreen(
             Icon(
                 painter = painterResource(id = R.drawable.hourglass_icon),
                 contentDescription = "Waiting for device",
-                tint = Color.White.copy(alpha = 0.7f),
+                tint = AppColor.Secondary,
                 modifier = Modifier.size(16.dp),
             )
             Text(
                 text = stringResource(R.string.waiting_for_active_device),
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color.White.copy(alpha = 0.7f),
+                color = AppColor.Secondary,
             )
           }
         }
 
         // Start Streaming Button
         SwitchButton(
-            label = stringResource(R.string.stream_button_title),
+            label = "Start",
             onClick = { viewModel.navigateToStreaming(onRequestWearablesPermission) },
             enabled = uiState.hasActiveDevice,
         )
       }
 
-      // Getting Started Sheet
-      if (uiState.isGettingStartedSheetVisible) {
-        ModalBottomSheet(
-            onDismissRequest = { viewModel.hideGettingStartedSheet() },
-            sheetState = gettingStartedSheetState,
-        ) {
-          GettingStartedSheetContent(
-              onContinue = {
-                scope.launch {
-                  gettingStartedSheetState.hide()
-                  viewModel.hideGettingStartedSheet()
-                }
-              }
-          )
-        }
-      }
+      // Getting Started Sheet (removed from default view)
     }
-  }
 }
 
 @Composable

@@ -10,13 +10,16 @@ package com.meta.wearable.dat.externalsampleapps.cameraaccess.ui
 
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 @Composable
 fun SwitchButton(
@@ -27,18 +30,19 @@ fun SwitchButton(
     enabled: Boolean = true,
 ) {
   Button(
-      modifier = modifier.height(56.dp).fillMaxWidth(),
+      modifier = modifier.height(52.dp).fillMaxWidth(),
       onClick = onClick,
+      shape = RoundedCornerShape(12.dp),
       colors =
           ButtonDefaults.buttonColors(
               containerColor =
-                  if (isDestructive) AppColor.DestructiveBackground else AppColor.DeepBlue,
-              disabledContainerColor = Color.Gray,
-              disabledContentColor = Color.DarkGray,
+                  if (isDestructive) AppColor.DestructiveBackground else AppColor.PrimaryAccent,
+              disabledContainerColor = AppColor.Secondary.copy(alpha = 0.3f),
+              disabledContentColor = AppColor.TextSecondary,
               contentColor = if (isDestructive) AppColor.DestructiveForeground else Color.White,
           ),
       enabled = enabled,
   ) {
-    Text(label)
+    Text(label, fontWeight = FontWeight.Medium, fontSize = 15.sp)
   }
 }
