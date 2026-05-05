@@ -9,8 +9,8 @@
 package com.meta.wearable.dat.externalsampleapps.cameraaccess.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -31,42 +31,18 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-
-// ── Hardcoded demo data ─────────────────────────────────────────────
-
-private data class Medication(val name: String, val schedule: String)
-
-private val medications = listOf(
-    Medication("Metformin 500mg", "2x daily"),
-    Medication("Lisinopril 10mg", "Morning"),
-    Medication("Amlodipine 5mg", "Afternoon"),
-    Medication("Omeprazole 20mg", "Afternoon"),
-    Medication("Calcium 600mg", "Morning"),
-    Medication("Vitamin D 1000IU", "Morning"),
-    Medication("Aspirin 81mg", "Evening"),
-    Medication("Atorvastatin 20mg", "Evening"),
-)
-
-private data class EmergencyContact(val name: String, val phone: String)
-
-private val emergencyContacts = listOf(
-    EmergencyContact("Dr. Patel (Primary)", "555-0123"),
-    EmergencyContact("Maria (Caregiver)", "555-0456"),
-)
 
 // ── Profile Screen ──────────────────────────────────────────────────
 
@@ -74,9 +50,14 @@ private val emergencyContacts = listOf(
 @Composable
 fun CareRecipientProfile(
     modifier: Modifier = Modifier,
+    careRecipient: CareRecipient = DemoData.careRecipient,
+    medications: List<Medication> = DemoData.medications,
+    conditions: List<Condition> = DemoData.conditions,
+    allergies: List<Allergen> = DemoData.allergies,
+    emergencyContacts: List<EmergencyContact> = DemoData.emergencyContacts,
 ) {
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
-    val cardShape = RoundedCornerShape(16.dp)
+    val cardShape = RoundedCornerShape(24.dp)
 
     Column(
         modifier = modifier
@@ -89,38 +70,48 @@ fun CareRecipientProfile(
 
         // ── Header ──────────────────────────────────────────────────
 
-        Spacer(Modifier.height(statusBarPadding.calculateTopPadding() + 20.dp))
+        Spacer(Modifier.height(statusBarPadding.calculateTopPadding() + 32.dp))
 
-        // Avatar circle
+        // Avatar — subtle radial gradient (cream center, soft sage at the edge).
+        // Calm anchor that echoes the page atmosphere; reads as a portrait stand-in,
+        // not a UI accent. Color stops hold cream across most of the circle, with
+        // a thin sage ring at the perimeter for soft depth.
+        val avatarGradient = Brush.radialGradient(
+            colorStops = arrayOf(
+                0.0f to AppColor.Surface,
+                0.70f to AppColor.Surface,
+                1.0f to AppColor.SageSurface,
+            ),
+        )
         Box(
             modifier = Modifier
-                .size(72.dp)
+                .size(112.dp)
                 .clip(CircleShape)
-                .background(AppColor.PrimaryAccent.copy(alpha = 0.15f)),
+                .background(avatarGradient),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                imageVector = Icons.Default.Person,
-                contentDescription = "Avatar",
-                tint = AppColor.PrimaryAccent,
-                modifier = Modifier.size(32.dp),
+            Text(
+                text = extractInitials(careRecipient.fullName),
+                style = MaterialTheme.typography.displayMedium,
+                color = AppColor.TextPrimary,
             )
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(20.dp))
 
         Text(
-            text = "Janani",
-            fontSize = 22.sp,
-            fontWeight = FontWeight.SemiBold,
+            // First name only — feels personal; full name reads clinical for "Mom."
+            // The data class still holds lastName for future paperwork/export.
+            text = careRecipient.firstName,
+            style = MaterialTheme.typography.displayMedium,
             color = AppColor.TextPrimary,
         )
 
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(8.dp))
 
         Text(
-            text = "Age 78 \u00B7 Mother",
-            fontSize = 14.sp,
+            text = "Age ${careRecipient.age} \u00B7 ${careRecipient.relationship}",
+            style = MaterialTheme.typography.bodyLarge,
             color = AppColor.TextSecondary,
         )
 
@@ -129,8 +120,8 @@ fun CareRecipientProfile(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(top = 24.dp),
+                .padding(horizontal = 24.dp)
+                .padding(top = 28.dp),
             shape = cardShape,
             colors = CardDefaults.cardColors(containerColor = AppColor.Surface),
             elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
@@ -138,34 +129,47 @@ fun CareRecipientProfile(
             Column {
                 Text(
                     text = "Medications (${medications.size})",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = AppColor.TextSecondary,
-                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = AppColor.TextPrimary,
+                    modifier = Modifier.padding(24.dp),
                 )
 
                 medications.forEachIndexed { index, med ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                            .padding(horizontal = 24.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            text = med.name,
-                            fontSize = 15.sp,
-                            color = AppColor.TextPrimary,
+                        // Brand pill icon — visual scanning anchor for the row.
+                        PillIcon(
+                            color = med.pillColor,
+                            kind = med.pillKind,
+                            modifier = Modifier.size(28.dp),
                         )
-                        Text(
-                            text = med.schedule,
-                            fontSize = 14.sp,
-                            color = AppColor.TextSecondary,
-                        )
+                        Spacer(Modifier.width(14.dp))
+                        // Two-line med info (Pillory MedRow pattern)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = med.name,
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                                ),
+                                color = AppColor.TextPrimary,
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = "${med.category} \u00B7 ${med.schedule}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = AppColor.TextSecondary,
+                            )
+                        }
+                        // (No trailing schedule chip — moved into the subline above
+                        //  so the row stays compact and the right edge is clean.)
                     }
                     if (index < medications.lastIndex) {
                         HorizontalDivider(
-                            modifier = Modifier.padding(horizontal = 16.dp),
+                            modifier = Modifier.padding(horizontal = 24.dp),
                             color = AppColor.Secondary.copy(alpha = 0.3f),
                         )
                     }
@@ -178,85 +182,69 @@ fun CareRecipientProfile(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(top = 16.dp),
+                .padding(horizontal = 24.dp)
+                .padding(top = 20.dp),
             shape = cardShape,
             colors = CardDefaults.cardColors(containerColor = AppColor.Surface),
             elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(24.dp)) {
                 Text(
                     text = "Conditions",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = AppColor.TextSecondary,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = AppColor.TextPrimary,
                 )
-
-                Spacer(Modifier.height(8.dp))
-
+                Spacer(Modifier.height(14.dp))
+                // Pillory benefit-chips pattern: 2-up FlowRow of pill-shape chips
+                // with emoji + label. Far more scannable than a flat text strip.
                 FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text(
-                        text = "Type 2 Diabetes \u00B7 Hypertension \u00B7 High Cholesterol \u00B7 Osteoporosis",
-                        fontSize = 15.sp,
-                        color = AppColor.TextPrimary,
-                    )
+                    conditions.forEach { c ->
+                        ConditionChip(emoji = c.emoji, label = c.name)
+                    }
                 }
             }
         }
 
-        // ── Allergies (amber left border) ───────────────────────────
+        // ── Allergies (amber left border + warning chips) ───────────
 
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(top = 16.dp)
-                .border(
-                    width = 0.dp,
-                    color = AppColor.Surface,
-                    shape = cardShape,
-                ),
+                .padding(horizontal = 24.dp)
+                .padding(top = 20.dp),
             shape = cardShape,
             colors = CardDefaults.cardColors(containerColor = AppColor.Surface),
             elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
         ) {
             Row(modifier = Modifier.fillMaxWidth()) {
-                // Amber left border
+                // Amber left border bar
                 Box(
                     modifier = Modifier
                         .width(4.dp)
-                        .height(80.dp)
+                        .height(120.dp)
                         .background(
                             color = AppColor.Warning,
-                            shape = RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp),
+                            shape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp),
                         ),
                 )
 
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(24.dp)) {
                     Text(
                         text = "Allergies",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = AppColor.TextSecondary,
+                        style = MaterialTheme.typography.titleLarge,
+                        color = AppColor.TextPrimary,
                     )
-
-                    Spacer(Modifier.height(8.dp))
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Warning,
-                            contentDescription = "Allergy warning",
-                            tint = AppColor.Warning,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = "Penicillin \u00B7 Sulfa drugs",
-                            fontSize = 15.sp,
-                            color = AppColor.Warning,
-                        )
+                    Spacer(Modifier.height(14.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        allergies.forEach { a ->
+                            AllergenChip(emoji = a.emoji, label = a.name)
+                        }
                     }
                 }
             }
@@ -267,43 +255,111 @@ fun CareRecipientProfile(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(top = 16.dp),
+                .padding(horizontal = 24.dp)
+                .padding(top = 20.dp),
             shape = cardShape,
             colors = CardDefaults.cardColors(containerColor = AppColor.Surface),
             elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(20.dp)) {
                 Text(
                     text = "Emergency",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = AppColor.TextSecondary,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = AppColor.TextPrimary,
                 )
-
-                Spacer(Modifier.height(8.dp))
-
+                Spacer(Modifier.height(10.dp))
                 emergencyContacts.forEach { contact ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 4.dp),
+                            .padding(vertical = 6.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
                             text = contact.name,
-                            fontSize = 15.sp,
+                            style = MaterialTheme.typography.bodyLarge,
                             color = AppColor.TextPrimary,
                         )
                         Text(
                             text = contact.phone,
-                            fontSize = 15.sp,
+                            style = MaterialTheme.typography.bodyLarge,
                             color = AppColor.TextSecondary,
                         )
                     }
                 }
             }
         }
+    }
+}
+
+// ── Avatar initials helper ──────────────────────────────────────────
+
+/**
+ * Extracts up to 2 initials from a person's name.
+ *
+ * TODO (user contribution): refine the rules. Real names are messy:
+ *   - "Rosa Martinez"      → "RM"
+ *   - "Dr. Sam Kartner"    → "SK"? or "DS"? (titles usually stripped)
+ *   - "Mary Anne Smith"    → "MS" (first + last)? or "MA" (first two)?
+ *   - "Madonna"            → "M" (single name)
+ *   - leading/trailing whitespace, hyphenated names like "Anne-Marie", etc.
+ *
+ * Naive baseline: take the first character of each whitespace-separated word, up to 2.
+ * Replace with whatever rules feel right for the caregiver context.
+ */
+private fun extractInitials(name: String): String {
+    return name.trim()
+        .split("\\s+".toRegex())
+        .filter { it.isNotEmpty() }
+        .take(2)
+        .map { it.first().uppercaseChar() }
+        .joinToString("")
+        .ifEmpty { "?" }
+}
+
+// ── Chip composables (Pillory benefit-chips pattern) ──────────────────────
+
+/** Cream pill-shape chip with emoji + label — Pillory's "Boost immunity" style. */
+@Composable
+private fun ConditionChip(emoji: String, label: String) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(AppColor.Background.copy(alpha = 0.20f)) // soft sage tint on cream card
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text = emoji, style = MaterialTheme.typography.bodyMedium)
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+            ),
+            color = AppColor.TextPrimary,
+        )
+    }
+}
+
+/** Warning-tinted chip — same shape as Condition chip but amber-flavored. */
+@Composable
+private fun AllergenChip(emoji: String, label: String) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(AppColor.Warning.copy(alpha = 0.15f)) // soft amber wash
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text = emoji, style = MaterialTheme.typography.bodyMedium)
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+            ),
+            color = AppColor.Warning,
+        )
     }
 }

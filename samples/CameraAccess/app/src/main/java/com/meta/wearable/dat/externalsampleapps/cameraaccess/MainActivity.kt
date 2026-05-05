@@ -31,6 +31,7 @@ import com.meta.wearable.dat.core.Wearables
 import com.meta.wearable.dat.core.types.Permission
 import com.meta.wearable.dat.core.types.PermissionStatus
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.ui.CameraAccessScaffold
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.ui.DrishtiTheme
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.wearables.WearablesViewModel
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellableContinuation
@@ -83,10 +84,12 @@ class MainActivity : ComponentActivity() {
     }
 
     setContent {
-      CameraAccessScaffold(
-          viewModel = viewModel,
-          onRequestWearablesPermission = ::requestWearablesPermission,
-      )
+      DrishtiTheme {
+        CameraAccessScaffold(
+            viewModel = viewModel,
+            onRequestWearablesPermission = ::requestWearablesPermission,
+        )
+      }
     }
   }
 

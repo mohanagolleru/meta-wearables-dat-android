@@ -2,6 +2,6 @@
 <resources>
 
     <style name="Theme.CameraAccess" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:colorBackground">#F4F3EE</item>
+        <item name="android:colorBackground">#A6AE7E</item>
     </style>
 </resources>

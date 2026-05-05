@@ -128,15 +128,14 @@ fun NonStreamScreen(
             }
             Text(
                 text = "Glasses Connected",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.headlineSmall,
                 color = AppColor.TextPrimary,
             )
           }
         } else {
           Text(
               text = "Waiting for glasses...",
-              fontSize = 16.sp,
+              style = MaterialTheme.typography.bodyLarge,
               color = AppColor.TextSecondary,
           )
         }

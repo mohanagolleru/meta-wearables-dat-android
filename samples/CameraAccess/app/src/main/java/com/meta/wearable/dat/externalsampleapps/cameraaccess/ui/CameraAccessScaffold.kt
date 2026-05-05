@@ -44,7 +44,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.meta.wearable.dat.core.types.Permission
@@ -126,18 +125,9 @@ fun CameraAccessScaffold(
                             )
                         }
                     }
-                    DrishtiTab.LOG -> {
-                        Box(
-                            modifier = Modifier.fillMaxSize().padding(innerPadding),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = "Care Log\nComing soon",
-                                textAlign = TextAlign.Center,
-                                color = AppColor.TextSecondary,
-                            )
-                        }
-                    }
+                    DrishtiTab.LOG -> CareLogScreen(
+                        modifier = Modifier.padding(innerPadding),
+                    )
                     DrishtiTab.PROFILE -> CareRecipientProfile(
                         modifier = Modifier.padding(innerPadding),
                     )
