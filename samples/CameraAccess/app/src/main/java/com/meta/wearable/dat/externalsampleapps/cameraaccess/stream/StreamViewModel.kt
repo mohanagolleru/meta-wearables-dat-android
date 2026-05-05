@@ -92,12 +92,20 @@ class StreamViewModel(
 
   private var videoJob: Job? = null
   private var stateJob: Job? = null
+  // Watchdog: kicks in when session enters STARTING and never progresses.
+  // Stella's BTC RFCOMM link can fail to establish (e.g. after a Meta AI app
+  // update leaves Stella's link state inconsistent), leaving the session stuck
+  // at STARTING forever with no SDK error. Without this watchdog the user sees
+  // an indefinite "Connecting..." spinner.
+  private var startingWatchdogJob: Job? = null
+  private val STARTING_TIMEOUT_MS = 15_000L
 
   private var frameCounter: Long = 0
   private var wsSendFailCount: Int = 0
   private var audioSendFailCount: Int = 0
 
   fun startStream() {
+    Log.i(TAG, "startStream: entry")
     // Re-entry guard: if a session is already alive, a duplicate startStream() call
     // (e.g. LaunchedEffect firing twice on recomposition) would race with async SDK cleanup
     // and trigger error code 1300 ("cannot process request from the current state, STOPPED").
@@ -152,7 +160,10 @@ class StreamViewModel(
               deviceSelector,
               StreamConfiguration(videoQuality = VideoQuality.LOW, 10),
           )
-          .also { streamSession = it }
+          .also {
+            streamSession = it
+            Log.i(TAG, "startStream: session created, awaiting state")
+          }
     } catch (t: Throwable) {
       Log.e(TAG, "Failed to start stream session", t)
       // Null callbacks before stopping — prevents late events from hitting released resources
@@ -181,7 +192,33 @@ class StreamViewModel(
         viewModelScope.launch {
           session.state.collect { currentState ->
             val prevState = _uiState.value.streamSessionState
+            Log.i(TAG, "stream state -> $currentState (prev=$prevState)")
             _uiState.update { it.copy(streamSessionState = currentState) }
+
+            // ── Watchdog: arm on STARTING, disarm on success ──────────────
+            // STARTING means SDK accepted startStreamSession() and is bringing up
+            // the BTC RFCOMM link. Normal path: STARTING → STARTED → STREAMING in
+            // ~3-5 seconds. If we sit at STARTING past 15s, Stella's link state
+            // is corrupted (typical cause: Meta AI app updated mid-session). The
+            // OS-level fix is a Bluetooth stack toggle — start.sh does that
+            // preemptively. As a defensive backup, we silently stop the session
+            // here and return the user to the Start button. NO error message —
+            // alarming the user is the antithesis of "don't face these issues".
+            // By the time they tap Start again the link has usually self-healed.
+            if (currentState == StreamSessionState.STARTING) {
+              startingWatchdogJob?.cancel()
+              startingWatchdogJob = viewModelScope.launch {
+                delay(STARTING_TIMEOUT_MS)
+                Log.w(TAG, "STARTING watchdog fired — silently stopping stuck session")
+                stopStream()
+                wearablesViewModel.navigateToDeviceSelection()
+              }
+            } else if (currentState == StreamSessionState.STARTED ||
+                currentState == StreamSessionState.STREAMING) {
+              // Success — disarm the watchdog
+              startingWatchdogJob?.cancel()
+              startingWatchdogJob = null
+            }
 
             // navigate back when state transitioned to STOPPED
             if (currentState != prevState && currentState == StreamSessionState.STOPPED) {
@@ -207,6 +244,8 @@ class StreamViewModel(
     videoJob = null
     stateJob?.cancel()
     stateJob = null
+    startingWatchdogJob?.cancel()
+    startingWatchdogJob = null
 
     try {
       streamSession?.close()
@@ -291,6 +330,13 @@ class StreamViewModel(
     val w = videoFrame.width
     val h = videoFrame.height
     val dataSize = buffer.remaining()
+
+    // First-frame breadcrumb — proves the videoStream Flow actually emitted at least once.
+    // Without this, "audio works, video doesn't" can't distinguish "session never reached
+    // STREAMING" from "session is STREAMING but Flow is empty".
+    if (frameCounter == 0L) {
+      Log.i(TAG, "videoStream first frame received: ${w}x${h} ${dataSize}B")
+    }
 
     // MEDIUM FIX: validate I420 frame size (Y + U + V = w*h * 3/2)
     val expectedSize = w * h * 3 / 2
